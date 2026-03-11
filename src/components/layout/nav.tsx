@@ -54,16 +54,6 @@ export function Sidebar() {
           })}
         </nav>
 
-        <div className="border-t border-border p-4">
-          <div className="flex items-center gap-3">
-            <UserButton
-              appearance={{
-                elements: { avatarBox: "h-8 w-8" },
-              }}
-            />
-            <span className="text-sm text-muted">Account</span>
-          </div>
-        </div>
       </div>
     </aside>
   );
@@ -98,12 +88,18 @@ export function MobileNav() {
 
 export function TopBar() {
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-surface/80 px-6 backdrop-blur-sm lg:hidden">
-      <div className="flex items-center gap-2">
+    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-surface px-6 lg:pl-[calc(16rem+1.5rem)]">
+      <div className="flex items-center gap-2 lg:hidden">
         <span className="text-2xl">声</span>
         <span className="text-lg font-bold">KoeJLPT</span>
       </div>
-      <UserButton />
+      <div className="ml-auto">
+        <UserButton
+          appearance={{
+            elements: { avatarBox: "h-8 w-8" },
+          }}
+        />
+      </div>
     </header>
   );
 }

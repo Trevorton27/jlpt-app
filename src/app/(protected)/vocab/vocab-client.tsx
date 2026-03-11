@@ -176,7 +176,7 @@ export function VocabClient({ defaultLevel }: { defaultLevel: number }) {
                       <div className="flex items-center gap-2">
                         <span className="text-xl font-bold jp-text">{word.word}</span>
                         <button
-                          onClick={() => playAudio(word.word)}
+                          onClick={() => playAudio(word.furigana || word.word)}
                           className="rounded-full p-1 text-muted hover:text-primary hover:bg-primary/10 transition-colors"
                           disabled={playingWord === word.word}
                         >

@@ -10,6 +10,7 @@ export default function SignUpPage() {
           <p className="text-muted">Create an account to begin studying</p>
         </div>
         <SignUp
+          forceRedirectUrl="/dashboard"
           appearance={{
             elements: {
               rootBox: "mx-auto",

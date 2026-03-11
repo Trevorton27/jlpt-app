@@ -10,6 +10,7 @@ export default function SignInPage() {
           <p className="text-muted">Sign in to continue your JLPT study</p>
         </div>
         <SignIn
+          forceRedirectUrl="/dashboard"
           appearance={{
             elements: {
               rootBox: "mx-auto",
