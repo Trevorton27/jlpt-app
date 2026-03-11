@@ -1,0 +1,45 @@
+import { cn } from "@/lib/utils";
+import { HTMLAttributes } from "react";
+
+interface CardProps extends HTMLAttributes<HTMLDivElement> {
+  hover?: boolean;
+}
+
+export function Card({ className, hover, children, ...props }: CardProps) {
+  return (
+    <div
+      className={cn(
+        "rounded-xl border border-border bg-surface p-6 shadow-sm",
+        hover && "transition-all duration-150 hover:shadow-md hover:border-primary/20 cursor-pointer",
+        className
+      )}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function CardHeader({ className, children, ...props }: HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div className={cn("mb-4", className)} {...props}>
+      {children}
+    </div>
+  );
+}
+
+export function CardTitle({ className, children, ...props }: HTMLAttributes<HTMLHeadingElement>) {
+  return (
+    <h3 className={cn("text-lg font-semibold", className)} {...props}>
+      {children}
+    </h3>
+  );
+}
+
+export function CardDescription({ className, children, ...props }: HTMLAttributes<HTMLParagraphElement>) {
+  return (
+    <p className={cn("text-sm text-muted", className)} {...props}>
+      {children}
+    </p>
+  );
+}

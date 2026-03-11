@@ -1,0 +1,170 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model UserProfile {
+  id        String   @id @default(cuid())
+  clerkId   String   @unique
+  email     String?
+  name      String?
+  imageUrl  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  preferences           UserPreferences?
+  savedVocabulary       SavedVocabulary[]
+  studySessions         StudySession[]
+  pronunciationAttempts PronunciationAttempt[]
+  conversationSessions  ConversationSession[]
+
+  @@index([clerkId])
+}
+
+model UserPreferences {
+  id            String  @id @default(cuid())
+  userId        String  @unique
+  jlptLevel     Int     @default(5)
+  dailyGoal     Int     @default(20)
+  voiceSpeed    Float   @default(1.0)
+  showRomaji    Boolean @default(false)
+  autoPlayAudio Boolean @default(true)
+
+  user UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SavedVocabulary {
+  id            String      @id @default(cuid())
+  userId        String
+  word          String
+  reading       String?
+  meaning       String
+  jlptLevel     Int
+  status        VocabStatus @default(SAVED)
+  timesStudied  Int         @default(0)
+  lastStudiedAt DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  user UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, word])
+  @@index([userId, jlptLevel])
+  @@index([userId, status])
+}
+
+enum VocabStatus {
+  SAVED
+  STUDYING
+  DIFFICULT
+  MASTERED
+}
+
+model StudySession {
+  id              String        @id @default(cuid())
+  userId          String
+  jlptLevel       Int
+  sessionType     SessionType
+  wordsPracticed  Int           @default(0)
+  totalWords      Int           @default(0)
+  durationSeconds Int?
+  status          SessionStatus @default(IN_PROGRESS)
+  notes           String?
+  summary         String?
+  startedAt       DateTime      @default(now())
+  completedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  user UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, sessionType])
+  @@index([userId, startedAt])
+}
+
+enum SessionType {
+  VOCABULARY
+  PRONUNCIATION
+  CONVERSATION
+}
+
+enum SessionStatus {
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+}
+
+model PronunciationAttempt {
+  id           String              @id @default(cuid())
+  userId       String
+  word         String
+  reading      String?
+  jlptLevel    Int
+  status       PronunciationStatus @default(ATTEMPTED)
+  attemptCount Int                 @default(1)
+  sessionId    String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  user UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, jlptLevel])
+  @@index([userId, status])
+}
+
+enum PronunciationStatus {
+  ATTEMPTED
+  NEEDS_RETRY
+  IMPROVED
+  COMPLETED
+}
+
+model ConversationSession {
+  id              String           @id @default(cuid())
+  userId          String
+  jlptLevel       Int
+  topic           String
+  mode            ConversationMode
+  status          SessionStatus    @default(IN_PROGRESS)
+  summary         String?
+  messageCount    Int              @default(0)
+  durationSeconds Int?
+  startedAt       DateTime         @default(now())
+  completedAt     DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  messages ConversationMessage[]
+  user     UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startedAt])
+}
+
+enum ConversationMode {
+  FREE
+  TOPIC_BASED
+  VOCAB_GUIDED
+}
+
+model ConversationMessage {
+  id        String      @id @default(cuid())
+  sessionId String
+  role      MessageRole
+  content   String
+  audioUrl  String?
+  createdAt DateTime    @default(now())
+
+  session ConversationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
