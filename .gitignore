@@ -34,7 +34,7 @@ yarn-error.log*
 .env
 .env.local
 .env.*.local
-
+ai-jlpt-app-8a3eb0aa4afb.json
 # vercel
 .vercel
 

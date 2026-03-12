@@ -2,6 +2,7 @@ import Link from "next/link";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { BookOpen, MessageCircle, Mic, TrendingUp } from "lucide-react";
+import { JlptInfoButton } from "@/components/ui/jlpt-info-modal";
 
 export default async function LandingPage() {
   const { userId } = await auth();
@@ -36,7 +37,7 @@ export default async function LandingPage() {
       {/* Hero */}
       <section className="mx-auto max-w-6xl px-6 py-24 text-center">
         <div className="mb-4 inline-block rounded-full bg-primary/10 px-4 py-1.5 text-sm font-medium text-primary">
-          Voice-first JLPT preparation
+          Voice-first JLPT preparation with Elevenlabs Agents
         </div>
         <h1 className="mx-auto max-w-3xl text-5xl font-bold leading-tight tracking-tight">
           Master Japanese with your{" "}
@@ -62,15 +63,18 @@ export default async function LandingPage() {
         </div>
 
         {/* Level badges */}
-        <div className="mt-12 flex items-center justify-center gap-3">
-          {["N5", "N4", "N3", "N2", "N1"].map((level) => (
-            <span
-              key={level}
-              className="rounded-full border border-border px-4 py-1 text-sm font-medium text-muted"
-            >
-              {level}
-            </span>
-          ))}
+        <div className="mt-12 flex flex-col items-center gap-2">
+          <div className="flex items-center justify-center gap-3">
+            {["N5", "N4", "N3", "N2", "N1"].map((level) => (
+              <span
+                key={level}
+                className="rounded-full border border-border px-4 py-1 text-sm font-medium text-muted"
+              >
+                {level}
+              </span>
+            ))}
+          </div>
+          <JlptInfoButton />
         </div>
       </section>
 
