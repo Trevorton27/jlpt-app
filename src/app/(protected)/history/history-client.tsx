@@ -22,6 +22,17 @@ interface Props {
     startedAt: string;
     summary: string | null;
   }>;
+  savedVocabulary: Array<{
+    id: string;
+    word: string;
+    reading: string | null;
+    meaning: string;
+    jlptLevel: number;
+    status: string;
+    timesStudied: number;
+    lastStudiedAt: string | null;
+    createdAt: string;
+  }>;
   conversationSessions: Array<{
     id: string;
     topic: string;
@@ -43,7 +54,7 @@ interface Props {
   }>;
 }
 
-export function HistoryClient({ studySessions, conversationSessions, pronunciationAttempts }: Props) {
+export function HistoryClient({ studySessions, savedVocabulary, conversationSessions, pronunciationAttempts }: Props) {
   const [tab, setTab] = useState<Tab>("all");
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
@@ -74,9 +85,9 @@ export function HistoryClient({ studySessions, conversationSessions, pronunciati
         ))}
       </div>
 
-      {(tab === "all" || tab === "vocab") && (
+      {tab === "all" && (
         <section>
-          {tab === "all" && <h2 className="text-lg font-semibold mb-3">Study Sessions</h2>}
+          <h2 className="text-lg font-semibold mb-3">Study Sessions</h2>
           {studySessions.length === 0 ? (
             <EmptyState
               icon={<BookOpen className="h-10 w-10" />}
@@ -85,9 +96,7 @@ export function HistoryClient({ studySessions, conversationSessions, pronunciati
             />
           ) : (
             <div className="space-y-3">
-              {studySessions
-                .filter((s) => tab === "all" || s.sessionType === "VOCABULARY")
-                .map((session) => (
+              {studySessions.map((session) => (
                   <Card key={session.id}>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
@@ -124,6 +133,54 @@ export function HistoryClient({ studySessions, conversationSessions, pronunciati
                     </div>
                   </Card>
                 ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {tab === "vocab" && (
+        <section>
+          {savedVocabulary.length === 0 ? (
+            <EmptyState
+              icon={<BookOpen className="h-10 w-10" />}
+              title="No saved vocabulary"
+              description="Save words from the vocabulary page to see them here"
+            />
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {savedVocabulary.map((vocab) => (
+                <Card key={vocab.id} className="py-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium jp-text">{vocab.word}</p>
+                      {vocab.reading && (
+                        <p className="text-sm text-muted jp-text">{vocab.reading}</p>
+                      )}
+                      <p className="text-sm text-muted">{vocab.meaning}</p>
+                      <p className="text-xs text-muted mt-1">
+                        {vocab.timesStudied > 0
+                          ? `Studied ${vocab.timesStudied} time${vocab.timesStudied > 1 ? "s" : ""}`
+                          : "Not studied yet"}
+                        {" · "}
+                        {formatRelativeTime(vocab.createdAt)}
+                      </p>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      <Badge>{jlptLevelLabel(vocab.jlptLevel)}</Badge>
+                      <Badge
+                        variant={
+                          vocab.status === "MASTERED" ? "success" :
+                          vocab.status === "DIFFICULT" ? "warning" :
+                          vocab.status === "STUDYING" ? "info" :
+                          "default"
+                        }
+                      >
+                        {vocab.status.toLowerCase()}
+                      </Badge>
+                    </div>
+                  </div>
+                </Card>
+              ))}
             </div>
           )}
         </section>

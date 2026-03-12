@@ -32,6 +32,12 @@ export function PronunciationClient({ defaultLevel }: { defaultLevel: number }) 
   const [status, setStatus] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [score, setScore] = useState({ attempted: 0, completed: 0, needsRetry: 0 });
+  const [grading, setGrading] = useState(false);
+  const [gradeResult, setGradeResult] = useState<{
+    transcribed: string;
+    score: number;
+    status: string;
+  } | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   const loadItems = useCallback(async () => {
@@ -116,20 +122,22 @@ export function PronunciationClient({ defaultLevel }: { defaultLevel: number }) 
   async function startRecording() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
       mediaRecorderRef.current = mediaRecorder;
       setRecording(true);
       setStatus(null);
+      setGradeResult(null);
 
       const chunks: Blob[] = [];
       mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
-        // Save the attempt
-        if (current) {
-          await savePronunciationAttempt("ATTEMPTED");
-        }
         setRecording(false);
+
+        if (current && chunks.length > 0) {
+          const audioBlob = new Blob(chunks, { type: "audio/webm;codecs=opus" });
+          await gradeRecording(audioBlob);
+        }
       };
 
       mediaRecorder.start();
@@ -143,6 +151,43 @@ export function PronunciationClient({ defaultLevel }: { defaultLevel: number }) 
     } catch {
       setRecording(false);
       alert("Microphone access is required for pronunciation practice.");
+    }
+  }
+
+  async function gradeRecording(audioBlob: Blob) {
+    if (!current) return;
+    setGrading(true);
+    try {
+      const formData = new FormData();
+      formData.append("audio", audioBlob, "recording.webm");
+      formData.append("expected", current.text);
+
+      const res = await fetch("/api/pronunciation/grade", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        setGradeResult(result);
+        // Auto-set status and save attempt based on grade
+        const gradeStatus = result.status as "COMPLETED" | "IMPROVED" | "NEEDS_RETRY";
+        setStatus(gradeStatus);
+        await savePronunciationAttempt(gradeStatus);
+        setScore((prev) => ({
+          ...prev,
+          attempted: prev.attempted + 1,
+          completed: gradeStatus === "COMPLETED" || gradeStatus === "IMPROVED" ? prev.completed + 1 : prev.completed,
+          needsRetry: gradeStatus === "NEEDS_RETRY" ? prev.needsRetry + 1 : prev.needsRetry,
+        }));
+      } else {
+        // Fallback: save as attempted, let user self-assess
+        await savePronunciationAttempt("ATTEMPTED");
+      }
+    } catch {
+      await savePronunciationAttempt("ATTEMPTED");
+    } finally {
+      setGrading(false);
     }
   }
 
@@ -182,6 +227,7 @@ export function PronunciationClient({ defaultLevel }: { defaultLevel: number }) 
 
   function next() {
     setStatus(null);
+    setGradeResult(null);
     if (currentIndex < items.length - 1) {
       setCurrentIndex(currentIndex + 1);
     } else {
@@ -307,33 +353,89 @@ export function PronunciationClient({ defaultLevel }: { defaultLevel: number }) 
               </Button>
             </div>
 
-            {/* Self-assessment */}
-            <div className="mt-8 border-t border-border pt-6">
-              <p className="text-sm text-muted mb-3">How did it go?</p>
-              <div className="flex items-center justify-center gap-3">
-                <Button
-                  variant={status === "COMPLETED" ? "primary" : "secondary"}
-                  size="sm"
-                  onClick={() => markStatus("COMPLETED")}
-                >
-                  <CheckCircle className="h-4 w-4" /> Good
-                </Button>
-                <Button
-                  variant={status === "IMPROVED" ? "primary" : "secondary"}
-                  size="sm"
-                  onClick={() => markStatus("IMPROVED")}
-                >
-                  <RotateCcw className="h-4 w-4" /> Getting better
-                </Button>
-                <Button
-                  variant={status === "NEEDS_RETRY" ? "primary" : "secondary"}
-                  size="sm"
-                  onClick={() => markStatus("NEEDS_RETRY")}
-                >
-                  <AlertCircle className="h-4 w-4" /> Needs work
-                </Button>
+            {/* Grading result */}
+            {grading && (
+              <div className="mt-8 border-t border-border pt-6">
+                <div className="flex items-center justify-center gap-2 text-muted">
+                  <LoadingSpinner />
+                  <span className="text-sm">Analyzing pronunciation...</span>
+                </div>
               </div>
-            </div>
+            )}
+
+            {gradeResult && (
+              <div className="mt-8 border-t border-border pt-6 space-y-4">
+                <div className="flex items-center justify-center gap-4">
+                  <div
+                    className={`text-4xl font-bold ${
+                      gradeResult.score >= 80
+                        ? "text-emerald-500"
+                        : gradeResult.score >= 50
+                          ? "text-amber-500"
+                          : "text-red-500"
+                    }`}
+                  >
+                    {gradeResult.score}%
+                  </div>
+                  <div className="text-left">
+                    <p className="text-sm text-muted">You said:</p>
+                    <p className="text-lg jp-text">
+                      {gradeResult.transcribed || (
+                        <span className="text-muted italic">No speech detected</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-center">
+                  <Badge
+                    className={
+                      gradeResult.status === "COMPLETED"
+                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300"
+                        : gradeResult.status === "IMPROVED"
+                          ? "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300"
+                          : "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
+                    }
+                  >
+                    {gradeResult.status === "COMPLETED"
+                      ? "Great pronunciation!"
+                      : gradeResult.status === "IMPROVED"
+                        ? "Getting better - keep practicing!"
+                        : "Needs more practice"}
+                  </Badge>
+                </div>
+              </div>
+            )}
+
+            {/* Fallback self-assessment (when no grade or to override) */}
+            {!grading && !gradeResult && (
+              <div className="mt-8 border-t border-border pt-6">
+                <p className="text-sm text-muted mb-3">How did it go?</p>
+                <div className="flex items-center justify-center gap-3">
+                  <Button
+                    variant={status === "COMPLETED" ? "primary" : "secondary"}
+                    size="sm"
+                    onClick={() => markStatus("COMPLETED")}
+                  >
+                    <CheckCircle className="h-4 w-4" /> Good
+                  </Button>
+                  <Button
+                    variant={status === "IMPROVED" ? "primary" : "secondary"}
+                    size="sm"
+                    onClick={() => markStatus("IMPROVED")}
+                  >
+                    <RotateCcw className="h-4 w-4" /> Getting better
+                  </Button>
+                  <Button
+                    variant={status === "NEEDS_RETRY" ? "primary" : "secondary"}
+                    size="sm"
+                    onClick={() => markStatus("NEEDS_RETRY")}
+                  >
+                    <AlertCircle className="h-4 w-4" /> Needs work
+                  </Button>
+                </div>
+              </div>
+            )}
           </Card>
 
           {/* Next button */}

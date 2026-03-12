@@ -7,11 +7,16 @@ export default async function HistoryPage() {
   const profile = await getOrCreateUserProfile();
   if (!profile) redirect("/sign-in");
 
-  const [studySessions, conversationSessions, pronunciationAttempts] = await Promise.all([
+  const [studySessions, savedVocabulary, conversationSessions, pronunciationAttempts] = await Promise.all([
     db.studySession.findMany({
       where: { userId: profile.id },
       orderBy: { startedAt: "desc" },
       take: 50,
+    }),
+    db.savedVocabulary.findMany({
+      where: { userId: profile.id },
+      orderBy: { createdAt: "desc" },
+      take: 100,
     }),
     db.conversationSession.findMany({
       where: { userId: profile.id },
@@ -28,6 +33,7 @@ export default async function HistoryPage() {
   return (
     <HistoryClient
       studySessions={JSON.parse(JSON.stringify(studySessions))}
+      savedVocabulary={JSON.parse(JSON.stringify(savedVocabulary))}
       conversationSessions={JSON.parse(JSON.stringify(conversationSessions))}
       pronunciationAttempts={JSON.parse(JSON.stringify(pronunciationAttempts))}
     />

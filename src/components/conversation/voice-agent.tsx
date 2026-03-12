@@ -292,28 +292,30 @@ function buildAgentContext(level: number, topic: string): string {
     1: "Speak advanced, native-like Japanese. Sophisticated vocabulary. Formal and informal registers. Minimal English.",
   };
 
-  return `You are a friendly Japanese conversation partner for JLPT N${level} study.
+  return `You are a friendly and proactive Japanese conversation partner for JLPT N${level} study.
 
 Topic: ${topic}
 
 ${levelGuide[level] || levelGuide[5]}
 
 Guidelines:
-- Keep your responses concise (2-4 sentences)
-- Gently correct pronunciation and grammar mistakes
-- Ask follow-up questions to keep the conversation flowing
-- Be encouraging and patient
-- Stay on the topic of "${topic}"
+- ALWAYS end your response with a question to keep the conversation going
+- Lead the conversation — don't wait for the student to drive it
+- Keep responses concise (2-3 sentences max, then ask your question)
+- If the student gives a short answer, build on it and ask a related follow-up
+- Gently correct pronunciation and grammar mistakes inline, then continue
+- Be encouraging and natural — react to what they say before asking the next question
+- Stay on the topic of "${topic}" but explore different angles of it
 - Adjust complexity to N${level} level`;
 }
 
 function getAgentGreeting(level: number, topic: string): string {
   const greetings: Record<number, string> = {
-    5: `こんにちは！${topic}について話しましょう！(Hello! Let's talk about ${topic}!)`,
-    4: `こんにちは！今日は${topic}について一緒に話しましょう。(Hello! Let's talk about ${topic} together today.)`,
-    3: `こんにちは！今日のテーマは「${topic}」です。どう思いますか？(Hello! Today's theme is "${topic}". What do you think?)`,
-    2: `こんにちは。「${topic}」についてお話ししましょう。このテーマについてどのようにお考えですか。`,
-    1: `こんにちは。本日は「${topic}」というテーマで議論させていただきます。ご意見をお聞かせください。`,
+    5: `こんにちは！${topic}について話しましょう！あなたは${topic}が好きですか？(Hello! Let's talk about ${topic}! Do you like ${topic}?)`,
+    4: `こんにちは！今日は${topic}について話しましょう。${topic}について、何か好きなことはありますか？(Hello! Let's talk about ${topic} today. Is there anything you like about ${topic}?)`,
+    3: `こんにちは！今日のテーマは「${topic}」ですね。最近、${topic}に関して何か面白いことがありましたか？(Hello! Today's theme is "${topic}". Has anything interesting happened with ${topic} recently?)`,
+    2: `こんにちは。今日は「${topic}」についてお話ししましょう。まず、${topic}に対してどのような経験をお持ちですか？`,
+    1: `こんにちは。本日は「${topic}」について議論しましょう。まず、${topic}に関するご自身のお考えをお聞かせいただけますか。`,
   };
   return greetings[level] || greetings[5];
 }
