@@ -1,8 +1,62 @@
 # KoeJLPT - Voice-First JLPT Preparation
 
-A Next.js application for Japanese Language Proficiency Test (JLPT) preparation that combines level-based vocabulary study with interactive voice conversation and pronunciation practice.
+A Next.js application for Japanese Language Proficiency Test (JLPT) preparation that combines level-based vocabulary study, AI-powered voice conversations, and pronunciation grading — all tailored to the learner's target JLPT level (N5–N1).
 
-**Tech Stack:** Next.js 16 (App Router) | TypeScript | Tailwind CSS | PostgreSQL
+**Tech Stack:** Next.js 16 (App Router) | React 19 | TypeScript | Tailwind CSS v4 | PostgreSQL (Neon) | Prisma v6
+
+---
+
+## Features
+
+### Dashboard
+- Personalized greeting with current JLPT level
+- Quick-action cards linking to vocabulary, pronunciation, conversation, and difficult words review
+- Statistics overview: total sessions, saved words, pronunciation attempts, conversation count, study streak
+- Recent activity feed across all study modes
+
+### Vocabulary Study
+- Browse JLPT-curated word lists by level (N5–N1) with pagination
+- Search vocabulary across all levels by keyword
+- Listen to native pronunciation via ElevenLabs TTS
+- Save words to a personal collection with status tracking: SAVED → STUDYING → DIFFICULT → MASTERED
+- Track study count and last-studied date per word
+
+### Voice Conversation
+- Real-time voice conversation with an AI partner powered by ElevenLabs Conversational AI (WebRTC)
+- 15 level-appropriate conversation topics (self-introduction, shopping, travel, work, current events, etc.)
+- Agent speaks entirely in Japanese, adapted to the user's JLPT level
+- Live transcript with Japanese/English separation — English translations are hidden by default and togglable
+- Play English translations via TTS for listening practice
+- Post-call transcript review screen persists after the call ends
+- Full conversation transcripts saved to database for future review in History
+- Dynamic system prompts instruct the agent to lead conversations, correct mistakes, and always ask follow-up questions
+
+### Pronunciation Practice
+- Three study modes: **Words** (random JLPT vocabulary), **Phrases** (level-appropriate example sentences), **Difficult** (user's marked-difficult words)
+- Listen to reference pronunciation via TTS before recording
+- Record voice via browser microphone (WebM/Opus, 48kHz)
+- Automatic grading via Google Cloud Speech-to-Text: audio is transcribed and compared against expected text using character-level Levenshtein distance
+- Score 0–100 with status thresholds: COMPLETED (80+), IMPROVED (50–79), NEEDS_RETRY (<50)
+- Retry or skip to next word, with running scoreboard
+
+### Study History
+- Three tabs: **Vocabulary** (saved words with status), **Conversations** (session list), **Pronunciation** (attempt records)
+- Click any conversation to open a full transcript detail view with English translation toggle and TTS playback
+- All history data persisted across sessions
+
+### Settings
+- Select target JLPT level (N5–N1)
+- Configure daily word goal, TTS voice speed, romaji display, and auto-play audio
+- View profile info synced from Clerk
+
+### Onboarding
+- First-time user flow to select target JLPT level with descriptions and study-hour estimates
+- Stores preference and redirects to dashboard
+
+### Landing Page
+- Public splash page with feature overview, JLPT level badges, and sign-in/sign-up
+- "What is the JLPT?" modal explaining all five levels and the test structure
+- Authenticated users auto-redirect to dashboard
 
 ---
 
@@ -12,22 +66,11 @@ A Next.js application for Japanese Language Proficiency Test (JLPT) preparation 
 
 **Purpose:** User authentication, session management, and route protection.
 
-**How it's used:**
 - **Middleware** (`src/middleware.ts`) protects all `/dashboard`, `/vocab`, `/conversation`, `/pronunciation`, `/history`, `/settings`, `/onboarding`, and `/api/*` routes
 - **Server components** use `auth()` and `currentUser()` to fetch the authenticated user and link them to an internal `UserProfile` record via `clerkId`
-- **API routes** call `auth()` at the top of every handler to verify the request is authenticated before processing
+- **API routes** call `requireUserProfile()` to verify authentication before processing
 - **Frontend** uses `<ClerkProvider>`, `<SignIn>`, and `<SignUp>` components for the auth UI
-- User avatar images are loaded from `img.clerk.com` (configured in `next.config.ts`)
-
-**Environment variables:**
-```
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY   # Frontend auth key
-CLERK_SECRET_KEY                    # Server-side verification
-NEXT_PUBLIC_CLERK_SIGN_IN_URL       # /sign-in
-NEXT_PUBLIC_CLERK_SIGN_UP_URL       # /sign-up
-NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL # /dashboard
-NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL # /onboarding
-```
+- User avatar images loaded from `img.clerk.com` (configured in `next.config.ts`)
 
 **Package:** `@clerk/nextjs` v7
 
@@ -35,20 +78,14 @@ NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL # /onboarding
 
 ### 2. ElevenLabs (Text-to-Speech & Voice Agent)
 
-**Purpose:** Japanese speech synthesis for vocabulary/pronunciation audio playback, and real-time AI voice conversation partner.
+**Purpose:** Japanese speech synthesis for audio playback across all pages, and real-time AI voice conversation partner.
 
 #### Text-to-Speech (TTS)
 
-**How it's used:**
 - Library at `src/lib/elevenlabs.ts` wraps the ElevenLabs REST API
-- `generateSpeech()` sends Japanese text to the TTS endpoint, wrapping it in `<lang xml:lang="ja-JP">` tags for proper pronunciation
-- API route at `src/app/api/elevenlabs/tts/route.ts` exposes this as `POST /api/elevenlabs/tts`
-- Used on the **Vocabulary** page (listen to words), **Pronunciation** page (hear the target word before recording), and **Conversation** page (text chat mode)
-
-**ElevenLabs endpoint called:**
-```
-POST https://api.elevenlabs.io/v1/text-to-speech/{voiceId}
-```
+- `generateSpeech()` sends Japanese text to the TTS endpoint, wrapping it in `<lang xml:lang="ja-JP">` tags for correct pronunciation
+- API route at `POST /api/elevenlabs/tts` exposes this to the client
+- Used on **Vocabulary** (listen to words), **Pronunciation** (hear reference audio), **Conversation** (play English translations), and **History** (replay translations from past conversations)
 
 **Configuration:**
 - Voice: Sarah (`EXAVITQu4vr4xnSDxMaL`) — multilingual
@@ -57,22 +94,15 @@ POST https://api.elevenlabs.io/v1/text-to-speech/{voiceId}
 
 #### Voice Agent (Real-Time Conversation)
 
-**How it's used:**
-- `src/components/conversation/voice-agent.tsx` uses the `@elevenlabs/react` SDK to open a WebSocket connection to an ElevenLabs Conversational AI agent
-- On session start, the agent receives a dynamic system prompt (built by `buildAgentContext()`) and a first message greeting — both tailored to the user's JLPT level and chosen topic
-- The agent introduces itself, then leads the conversation by always ending responses with a question
-- The agent handles real-time speech recognition, LLM response generation, and speech synthesis over the WebSocket
+- `src/components/conversation/voice-agent.tsx` uses the `@elevenlabs/react` SDK to open a WebRTC connection to an ElevenLabs Conversational AI agent
+- On session start, the agent receives a dynamic system prompt (built by `buildAgentContext()`) tailored to the user's JLPT level and chosen topic
+- The agent introduces itself in Japanese, leads the conversation, corrects mistakes, and always ends with a follow-up question
+- English translations are appended in parentheses for the text transcript only (not spoken aloud)
 - Transcript entries are persisted to the database via `POST /api/conversation/message`
-- For private agents, a signed WebSocket URL is fetched server-side from `GET https://api.elevenlabs.io/v1/convai/conversation/get-signed-url`
+- Connection lifecycle managed with state machine: idle → connecting → connected → disconnecting
+- For private agents, a signed URL is fetched server-side from `GET /api/elevenlabs/signed-url`
 
-**Environment variables:**
-```
-ELEVENLABS_API_KEY                  # Server-side API key (xi-api-key header)
-ELEVENLABS_AGENT_ID                 # Server-side agent ID (for signed URL fallback)
-NEXT_PUBLIC_ELEVENLABS_AGENT_ID     # Client-side agent ID (direct WebSocket connection)
-```
-
-**Packages:** `@elevenlabs/react` v0.14
+**Packages:** `@elevenlabs/react` v0.14, `@elevenlabs/client` v0.15
 
 ---
 
@@ -80,23 +110,11 @@ NEXT_PUBLIC_ELEVENLABS_AGENT_ID     # Client-side agent ID (direct WebSocket con
 
 **Purpose:** Automatic pronunciation grading — transcribes user-recorded audio and compares it against the expected Japanese text.
 
-**How it's used:**
-- Library at `src/lib/google-stt.ts` initializes a Google Cloud `SpeechClient` using base64-decoded service account credentials from the environment
+- Library at `src/lib/google-stt.ts` initializes a Google Cloud `SpeechClient` using base64-decoded service account credentials
 - `transcribeAudio()` sends a WebM/Opus audio buffer to Google's `recognize` endpoint configured for Japanese (`ja-JP`) at 48kHz
-- `gradeTranscription()` normalizes both the expected and transcribed text (strips punctuation/spaces), then computes a 0–100 similarity score using character-level Levenshtein distance
+- `gradeTranscription()` normalizes both expected and transcribed text (strips punctuation/spaces), then computes a 0–100 similarity score using character-level Levenshtein distance
 - Scoring thresholds: >= 80% = COMPLETED, 50–79% = IMPROVED, < 50% = NEEDS_RETRY
-- API route at `src/app/api/pronunciation/grade/route.ts` accepts a `FormData` POST with `audio` (WebM file) and `expected` (text), returns `{ transcribed, score, status }`
-- Used on the **Pronunciation** page — after the user records themselves saying a word, the audio is sent for grading and results are displayed inline (score percentage, what Google heard, status badge)
-
-**Google Cloud API used:**
-```
-google.cloud.speech.v1.Speech.Recognize
-```
-
-**Environment variables:**
-```
-GOOGLE_APPLICATION_CREDENTIALS_JSON  # Base64-encoded service account JSON
-```
+- API route at `POST /api/pronunciation/grade` accepts `FormData` with `audio` (WebM) and `expected` (text), returns `{ transcribed, score, status }`
 
 **Package:** `@google-cloud/speech` v7
 
@@ -104,26 +122,20 @@ GOOGLE_APPLICATION_CREDENTIALS_JSON  # Base64-encoded service account JSON
 
 ### 4. JLPT Vocabulary API
 
-**Purpose:** Provides curated JLPT vocabulary word lists organized by level (N5–N1).
+**Purpose:** Curated JLPT vocabulary word lists organized by level (N5–N1).
 
-**How it's used:**
-- Library at `src/lib/jlpt-api.ts` wraps the external API with three functions:
-  - `fetchVocabByLevel(level, { offset, limit })` — paginated word list for a given JLPT level
+- Library at `src/lib/jlpt-api.ts` wraps the external API:
+  - `fetchVocabByLevel(level, { offset, limit })` — paginated word list
   - `searchVocab(query)` — keyword search across all levels
-  - `fetchRandomWords(level, count)` — fetches 100 words and returns a random subset
-- Responses are normalized to handle field name variations (`word`/`japanese`, `meaning`/`english`, `furigana`/`reading`)
-- Used on the **Vocabulary** page (browse and save words), **Pronunciation** page (load practice words for a level), and **Dashboard** (word of the day)
+  - `fetchRandomWords(level, count)` — random subset for pronunciation practice
+- Responses normalized to handle field name variations (`word`/`japanese`, `meaning`/`english`, `furigana`/`reading`)
+- Used on **Vocabulary** (browse/save), **Pronunciation** (load practice words), and **Dashboard**
 - Cached with Next.js ISR revalidation of 1 hour
 
-**Endpoints called:**
+**Endpoints:**
 ```
 GET https://jlpt-vocab-api.vercel.app/api/words?level={1-5}&offset={n}&limit={n}
 GET https://jlpt-vocab-api.vercel.app/api/words?keyword={query}
-```
-
-**Environment variables:**
-```
-NEXT_PUBLIC_JLPT_API_URL  # Default: https://jlpt-vocab-api.vercel.app
 ```
 
 ---
@@ -132,10 +144,8 @@ NEXT_PUBLIC_JLPT_API_URL  # Default: https://jlpt-vocab-api.vercel.app
 
 **Purpose:** Application database for user data, saved vocabulary, study sessions, pronunciation attempts, and conversation history.
 
-**How it's used:**
 - Prisma client singleton at `src/lib/db.ts` (global instance to survive hot reloads in development)
 - Schema at `prisma/schema.prisma` defines 7 models with full cascade delete from `UserProfile`
-- All API routes and server components query the database through the Prisma client
 
 **Database models:**
 
@@ -149,29 +159,24 @@ NEXT_PUBLIC_JLPT_API_URL  # Default: https://jlpt-vocab-api.vercel.app
 | `ConversationSession` | Conversation practice metadata (topic, mode, message count, duration) |
 | `ConversationMessage` | Individual messages within a conversation (user/assistant/system) |
 
-**Environment variables:**
-```
-DATABASE_URL  # PostgreSQL connection string (e.g. Neon serverless)
-```
-
 **Package:** `@prisma/client` v6, `prisma` v6
 
 ---
 
-## API Routes Summary
+## API Routes
 
-| Route | Methods | External APIs | Purpose |
+| Route | Methods | External Service | Purpose |
 |---|---|---|---|
 | `/api/vocab` | GET, POST, PATCH, DELETE | Prisma | Manage saved vocabulary |
 | `/api/sessions` | GET, POST, PATCH | Prisma | Manage study sessions |
-| `/api/sessions/stats` | GET | Prisma | Dashboard statistics |
-| `/api/sessions/preferences` | GET, POST | Prisma | User preferences |
+| `/api/sessions/stats` | GET | Prisma | Dashboard statistics (totals, streak) |
+| `/api/sessions/preferences` | GET, POST | Prisma | User preferences (JLPT level, goals) |
 | `/api/pronunciation` | GET, POST, PATCH | Prisma | Pronunciation attempt records |
 | `/api/pronunciation/grade` | POST | Google Cloud STT | Grade recorded audio against expected text |
 | `/api/conversation` | GET, POST, PATCH | Prisma | Conversation session management |
 | `/api/conversation/message` | POST | Prisma | Save conversation messages |
 | `/api/elevenlabs/tts` | POST | ElevenLabs | Generate Japanese speech audio |
-| `/api/elevenlabs/signed-url` | GET | ElevenLabs | Get WebSocket URL for voice agent |
+| `/api/elevenlabs/signed-url` | GET | ElevenLabs | Get WebRTC signed URL for voice agent |
 
 All routes require Clerk authentication.
 
@@ -186,19 +191,65 @@ All routes require Clerk authentication.
 4. Study session tracked in `StudySession` table
 
 ### Pronunciation Practice
-1. Words loaded from **JLPT Vocab API** for selected level
+1. Words loaded from **JLPT Vocab API** for selected level (or user's difficult words)
 2. User listens to reference audio via **ElevenLabs TTS**
-3. User records themselves → WebM audio captured via MediaRecorder API
+3. User records themselves → WebM/Opus audio captured via MediaRecorder API
 4. Audio sent to **Google Cloud STT** → transcribed to Japanese text
 5. Transcription compared against expected text → score calculated via Levenshtein distance
 6. Result and status saved to `PronunciationAttempt` in **PostgreSQL**
 
 ### Voice Conversation
 1. User selects topic and level → `ConversationSession` created in **PostgreSQL**
-2. WebSocket connection opened to **ElevenLabs Voice Agent** with level-appropriate system prompt
-3. Agent introduces itself and begins the conversation with a topic-relevant question
+2. WebRTC connection opened to **ElevenLabs Voice Agent** with level-appropriate system prompt
+3. Agent introduces itself in Japanese and begins with a topic-relevant question
 4. Real-time speech recognition, LLM generation, and TTS happen on ElevenLabs infrastructure
-5. Transcript messages persisted to `ConversationMessage` in **PostgreSQL**
+5. Live transcript displays with Japanese/English parsing and optional translation toggle
+6. Transcript messages persisted to `ConversationMessage` in **PostgreSQL**
+7. After call ends, transcript remains visible for review
+8. Past conversations accessible from **History** page with full transcript replay
+
+---
+
+## Project Structure
+
+```
+src/
+├── app/
+│   ├── page.tsx                          # Landing page
+│   ├── layout.tsx                        # Root layout (ClerkProvider, fonts)
+│   ├── (auth)/                           # Sign-in, sign-up pages
+│   ├── (protected)/                      # Authenticated pages
+│   │   ├── layout.tsx                    # Sidebar, mobile nav, topbar
+│   │   ├── dashboard/                    # Dashboard with stats + quick actions
+│   │   ├── vocab/                        # Vocabulary browser + save/manage
+│   │   ├── pronunciation/                # Pronunciation practice + grading
+│   │   ├── conversation/                 # Topic selection + voice/text chat
+│   │   ├── history/                      # Review past sessions + transcripts
+│   │   ├── settings/                     # User preferences
+│   │   └── onboarding/                   # First-time JLPT level selection
+│   └── api/
+│       ├── vocab/                        # CRUD for saved vocabulary
+│       ├── sessions/                     # Study sessions, stats, preferences
+│       ├── pronunciation/                # Attempts + grading
+│       ├── conversation/                 # Sessions + messages
+│       └── elevenlabs/                   # TTS + signed URL
+├── components/
+│   ├── ui/                               # Button, Card, Badge, LevelSelector, etc.
+│   ├── layout/                           # Sidebar, MobileNav, TopBar
+│   └── conversation/                     # VoiceAgent component
+├── lib/
+│   ├── db.ts                             # Prisma client singleton
+│   ├── user.ts                           # Auth helpers (getOrCreateUserProfile)
+│   ├── utils.ts                          # Formatting, JLPT helpers
+│   ├── jlpt-api.ts                       # External JLPT vocab API wrapper
+│   ├── elevenlabs.ts                     # TTS + system prompt generation
+│   ├── google-stt.ts                     # Speech-to-text + grading
+│   └── conversation-utils.ts             # parseTranslation (JP/EN separation)
+├── types/
+│   ├── vocab.ts                          # JlptWord interface
+│   └── conversation.ts                   # ConversationTopic + 15 topic definitions
+└── middleware.ts                          # Clerk route protection
+```
 
 ---
 
