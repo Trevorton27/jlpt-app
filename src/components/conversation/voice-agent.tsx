@@ -2,7 +2,7 @@
 
 import { useConversation } from "@elevenlabs/react";
 import { useState, useCallback, useEffect } from "react";
-import { Mic, MicOff, Phone, PhoneOff, Volume2, VolumeX } from "lucide-react";
+import { Mic, MicOff, Phone, PhoneOff, Volume2, VolumeX, Languages, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +28,35 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(0.8);
+  const [showTranslation, setShowTranslation] = useState(false);
+  const [playingTranslation, setPlayingTranslation] = useState<number | null>(null);
+
+  async function playEnglishTranslation(text: string, index: number) {
+    if (playingTranslation !== null) return;
+    setPlayingTranslation(index);
+    try {
+      const res = await fetch("/api/elevenlabs/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.onended = () => {
+          setPlayingTranslation(null);
+          URL.revokeObjectURL(url);
+        };
+        audio.onerror = () => setPlayingTranslation(null);
+        await audio.play();
+      } else {
+        setPlayingTranslation(null);
+      }
+    } catch {
+      setPlayingTranslation(null);
+    }
+  }
 
   const conversation = useConversation({
     onConnect: () => {
@@ -96,7 +125,6 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
               prompt: {
                 prompt: buildAgentContext(level, topic),
               },
-              firstMessage: getAgentGreeting(level, topic),
             },
           },
         });
@@ -249,26 +277,57 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
       {/* Live transcript */}
       {transcript.length > 0 && (
         <Card>
-          <h3 className="text-sm font-semibold mb-3 text-muted uppercase tracking-wide">
-            Transcript
-          </h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-muted uppercase tracking-wide">
+              Transcript
+            </h3>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowTranslation((prev) => !prev)}
+              className="text-xs"
+            >
+              <Languages className="h-3.5 w-3.5" />
+              {showTranslation ? "Hide English Translation" : "Show English Translation"}
+            </Button>
+          </div>
           <div className="space-y-3 max-h-64 overflow-y-auto">
-            {transcript.map((entry, i) => (
-              <div
-                key={i}
-                className={`flex ${entry.role === "user" ? "justify-end" : "justify-start"}`}
-              >
+            {transcript.map((entry, i) => {
+              const { japanese, english } = parseTranslation(entry.content);
+              return (
                 <div
-                  className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm ${
-                    entry.role === "user"
-                      ? "bg-primary text-white"
-                      : "bg-background border border-border"
-                  }`}
+                  key={i}
+                  className={`flex ${entry.role === "user" ? "justify-end" : "justify-start"}`}
                 >
-                  <p className="jp-text whitespace-pre-wrap">{entry.content}</p>
+                  <div
+                    className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm ${
+                      entry.role === "user"
+                        ? "bg-primary text-white"
+                        : "bg-background border border-border"
+                    }`}
+                  >
+                    <p className="jp-text whitespace-pre-wrap">{japanese}</p>
+                    {showTranslation && english && entry.role === "assistant" && (
+                      <div className="mt-1.5 border-t border-border pt-1.5 flex items-start gap-2">
+                        <p className="text-xs text-muted italic flex-1">{english}</p>
+                        <button
+                          onClick={() => playEnglishTranslation(english, i)}
+                          disabled={playingTranslation !== null}
+                          className="shrink-0 rounded-full p-1 text-muted hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+                          title="Play English translation"
+                        >
+                          {playingTranslation === i ? (
+                            <Volume2 className="h-3.5 w-3.5 animate-pulse" />
+                          ) : (
+                            <Play className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {isConnected && isSpeaking && (
               <div className="flex justify-start">
                 <div className="rounded-2xl bg-background border border-border px-4 py-2">
@@ -283,26 +342,84 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
   );
 }
 
+/**
+ * Parse assistant messages to separate Japanese content from English translation.
+ * Handles multiple inline (English) segments scattered throughout the text,
+ * as well as [EN: ...] blocks and English-only trailing lines.
+ */
+function parseTranslation(content: string): { japanese: string; english: string } {
+  const englishParts: string[] = [];
+
+  // Extract all parenthesized segments that look like English (contain mostly Latin chars)
+  let japanese = content.replace(/\(([^)]{3,})\)/g, (_match, inner: string) => {
+    const latinRatio = (inner.match(/[A-Za-z]/g) || []).length / inner.length;
+    if (latinRatio > 0.4) {
+      englishParts.push(inner.trim());
+      return "";
+    }
+    return _match; // Keep non-English parenthetical content (e.g. Japanese in parens)
+  });
+
+  // Extract [EN: ...] blocks
+  japanese = japanese.replace(/\[EN:\s*([\s\S]*?)\]/g, (_match, inner: string) => {
+    englishParts.push(inner.trim());
+    return "";
+  });
+
+  // Check if the last line is English text (no parens/brackets)
+  const lines = japanese.split("\n").filter((l) => l.trim());
+  if (lines.length >= 2 && englishParts.length === 0) {
+    const lastLine = lines[lines.length - 1].trim();
+    const latinRatio = (lastLine.match(/[A-Za-z]/g) || []).length / Math.max(lastLine.length, 1);
+    if (latinRatio > 0.5) {
+      englishParts.push(lastLine);
+      lines.pop();
+      japanese = lines.join("\n");
+    }
+  }
+
+  // Clean up extra whitespace and trailing punctuation artifacts
+  japanese = japanese.replace(/\s{2,}/g, " ").replace(/\n\s*\n/g, "\n").trim();
+
+  return {
+    japanese,
+    english: englishParts.join(" "),
+  };
+}
+
 function buildAgentContext(level: number, topic: string): string {
   const levelGuide: Record<number, string> = {
-    5: "Speak very simple Japanese. Use です/ます form. Short sentences only. Basic vocabulary. Always provide English translation after Japanese.",
-    4: "Speak simple Japanese about daily topics. Use です/ます form. Basic grammar. Provide English translations.",
-    3: "Speak intermediate Japanese. Mix polite and casual forms. Natural daily conversation. Brief English hints for harder phrases.",
-    2: "Speak upper-intermediate Japanese. Complex grammar. Nuanced expressions. Only translate uncommon expressions.",
-    1: "Speak advanced, native-like Japanese. Sophisticated vocabulary. Formal and informal registers. Minimal English.",
+    5: "Use only basic, simple Japanese. です/ます form. Short sentences. Basic vocabulary.",
+    4: "Use simple Japanese about daily topics. です/ます form. Basic grammar patterns.",
+    3: "Use intermediate Japanese. Mix polite and casual forms. Natural daily conversation.",
+    2: "Use upper-intermediate Japanese. Complex grammar. Nuanced expressions.",
+    1: "Use advanced, native-like Japanese. Sophisticated vocabulary. Formal and informal registers.",
   };
 
-  return `You are a friendly and proactive Japanese conversation partner for JLPT N${level} study.
+  return `You are a friendly and proactive Japanese conversation partner for JLPT N${level} study. You are an AI voice agent powered by ElevenLabs.
 
 Topic: ${topic}
 
 ${levelGuide[level] || levelGuide[5]}
 
+CRITICAL — Language rules:
+- Your VOICE output must be ENTIRELY in Japanese. Do NOT speak any English words aloud.
+- After your complete Japanese response, include an English translation in parentheses at the very end.
+- Format: [All your Japanese sentences here] (English translation of everything you just said)
+- The English in parentheses is for the text transcript only — it will not be spoken aloud.
+- NEVER mix English into the middle of your Japanese sentences.
+
+Introduction (your very first message only):
+- Greet the student IN JAPANESE and tell them your name. Use your actual name from your ElevenLabs agent configuration. Say "私の名前は[your name]です".
+- Explain IN JAPANESE that you are an AI voice agent powered by ElevenLabs, here to help practice Japanese conversation for JLPT N${level}
+- Mention IN JAPANESE that they can speak naturally and you will respond in real time
+- Transition into the topic "${topic}" with an opening question
+- Put the full English translation at the end in parentheses
+
 Guidelines:
-- Introduce yourself as an elevenlabs agent designed to help practice Japanese conversation for JLPT N${level} and give the user your name.
 - ALWAYS end your response with a question to keep the conversation going
 - Lead the conversation — don't wait for the student to drive it
-- Keep responses concise (2-3 sentences max, then ask your question)
+- Keep responses concise (2-3 sentences max in Japanese, then your question)
 - If the student gives a short answer, build on it and ask a related follow-up
 - Gently correct pronunciation and grammar mistakes inline, then continue
 - Be encouraging and natural — react to what they say before asking the next question
@@ -310,13 +427,3 @@ Guidelines:
 - Adjust complexity to N${level} level`;
 }
 
-function getAgentGreeting(level: number, topic: string): string {
-  const greetings: Record<number, string> = {
-    5: `こんにちは！${topic}について話しましょう！あなたは${topic}が好きですか？(Hello! Let's talk about ${topic}! Do you like ${topic}?)`,
-    4: `こんにちは！今日は${topic}について話しましょう。${topic}について、何か好きなことはありますか？(Hello! Let's talk about ${topic} today. Is there anything you like about ${topic}?)`,
-    3: `こんにちは！今日のテーマは「${topic}」ですね。最近、${topic}に関して何か面白いことがありましたか？(Hello! Today's theme is "${topic}". Has anything interesting happened with ${topic} recently?)`,
-    2: `こんにちは。今日は「${topic}」についてお話ししましょう。まず、${topic}に対してどのような経験をお持ちですか？`,
-    1: `こんにちは。本日は「${topic}」について議論しましょう。まず、${topic}に関するご自身のお考えをお聞かせいただけますか。`,
-  };
-  return greetings[level] || greetings[5];
-}
