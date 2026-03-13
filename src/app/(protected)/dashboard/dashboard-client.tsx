@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   BookOpen,
@@ -56,22 +58,57 @@ interface Props {
 }
 
 export function DashboardClient({ profile, stats, recentSessions, savedVocab, recentConversations }: Props) {
-  const level = profile.preferences?.jlptLevel ?? 5;
+  const [level, setLevel] = useState(profile.preferences?.jlptLevel ?? 5);
+  const [saving, setSaving] = useState(false);
+  const router = useRouter();
   const firstName = profile.name?.split(" ")[0] || "there";
+
+  async function changeLevel(newLevel: number) {
+    setLevel(newLevel);
+    setSaving(true);
+    try {
+      await fetch("/api/sessions/preferences", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jlptLevel: newLevel }),
+      });
+      router.refresh();
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="animate-fade-in space-y-8">
       {/* Welcome header */}
-      <div>
-        <h1 className="text-2xl font-bold">
-          Welcome back, {firstName}
-        </h1>
-        <p className="text-muted mt-1">
-          Studying for{" "}
-          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${jlptLevelColor(level)}`}>
-            {jlptLevelLabel(level)}
-          </span>
-        </p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">
+            Welcome back, {firstName}
+          </h1>
+          <p className="text-muted mt-1">
+            Studying for{" "}
+            <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${jlptLevelColor(level)}`}>
+              {jlptLevelLabel(level)}
+            </span>
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {[5, 4, 3, 2, 1].map((n) => (
+            <button
+              key={n}
+              onClick={() => changeLevel(n)}
+              disabled={saving}
+              className={`rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors ${
+                level === n
+                  ? "bg-primary text-white"
+                  : "bg-surface border border-border text-muted hover:text-foreground hover:border-primary/30"
+              } disabled:opacity-50`}
+            >
+              N{n}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Quick actions */}
