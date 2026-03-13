@@ -1,13 +1,14 @@
 "use client";
 
 import { useConversation } from "@elevenlabs/react";
-import { useState, useCallback, useEffect } from "react";
-import { Mic, MicOff, Phone, PhoneOff, Volume2, VolumeX, Languages, Play } from "lucide-react";
+import { useState, useCallback, useRef, useEffect } from "react";
+import { Mic, Phone, PhoneOff, Volume2, VolumeX, Languages, Play, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { LoadingDots } from "@/components/ui/loading";
 import { jlptLevelLabel } from "@/lib/utils";
+import { parseTranslation } from "@/lib/conversation-utils";
 
 interface VoiceAgentProps {
   level: number;
@@ -23,6 +24,9 @@ interface TranscriptEntry {
   timestamp: Date;
 }
 
+// Connection lifecycle states for our wrapper layer
+type AgentState = "idle" | "connecting" | "connected" | "disconnecting" | "error";
+
 export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAgentProps) {
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +34,41 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
   const [volume, setVolume] = useState(0.8);
   const [showTranslation, setShowTranslation] = useState(false);
   const [playingTranslation, setPlayingTranslation] = useState<number | null>(null);
+  const [agentState, setAgentState] = useState<AgentState>("idle");
+  const [callEnded, setCallEnded] = useState(false);
+
+  // Refs to avoid stale closures and track lifecycle across async boundaries
+  const transcriptRef = useRef<TranscriptEntry[]>([]);
+  const agentStateRef = useRef<AgentState>("idle");
+  const mountedRef = useRef(true);
+
+  // Keep refs in sync
+  useEffect(() => {
+    transcriptRef.current = transcript;
+  }, [transcript]);
+
+  useEffect(() => {
+    agentStateRef.current = agentState;
+  }, [agentState]);
+
+  // Track mount state
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Safe state setter that no-ops after unmount
+  function safeSetState<T>(setter: React.Dispatch<React.SetStateAction<T>>) {
+    return (value: React.SetStateAction<T>) => {
+      if (mountedRef.current) setter(value);
+    };
+  }
+
+  const safeSetTranscript = safeSetState(setTranscript);
+  const safeSetError = safeSetState(setError);
+  const safeSetAgentState = safeSetState(setAgentState);
 
   async function playEnglishTranslation(text: string, index: number) {
     if (playingTranslation !== null) return;
@@ -60,66 +99,80 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
 
   const conversation = useConversation({
     onConnect: () => {
-      setError(null);
+      console.log("[VoiceAgent] Connected");
+      safeSetError(null);
+      safeSetAgentState("connected");
     },
     onDisconnect: () => {
-      // Session ended
+      console.log("[VoiceAgent] Disconnected");
+      // Only transition to idle if we weren't already handling a deliberate disconnect
+      if (agentStateRef.current !== "disconnecting") {
+        safeSetAgentState("idle");
+      }
     },
     onMessage: (message) => {
       const msg = message as { message?: string; role?: string; source?: string };
-      if (msg.message) {
-        setTranscript((prev) => [
-          ...prev,
-          {
-            role: msg.source === "user" ? "user" : "assistant",
-            content: msg.message!,
-            timestamp: new Date(),
-          },
-        ]);
+      if (!msg.message) return;
 
-        // Persist messages to backend
-        if (sessionId) {
-          fetch("/api/conversation/message", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              sessionId,
-              role: msg.source === "user" ? "USER" : "ASSISTANT",
-              content: msg.message,
-            }),
-          }).catch(() => {});
-        }
+      safeSetTranscript((prev) => [
+        ...prev,
+        {
+          role: msg.source === "user" ? "user" : "assistant",
+          content: msg.message!,
+          timestamp: new Date(),
+        },
+      ]);
+
+      // Persist messages to backend (fire-and-forget)
+      if (sessionId) {
+        fetch("/api/conversation/message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId,
+            role: msg.source === "user" ? "USER" : "ASSISTANT",
+            content: msg.message,
+          }),
+        }).catch(() => {});
       }
     },
     onError: (err) => {
-      console.error("ElevenLabs agent error:", err);
-      setError(typeof err === "string" ? err : "Connection error. Please try again.");
+      console.error("[VoiceAgent] Agent error:", err);
+      safeSetError(typeof err === "string" ? err : "Connection error. Please try again.");
+      safeSetAgentState("error");
     },
   });
 
   const startAgent = useCallback(async () => {
+    // Guard: prevent duplicate initialization
+    const currentState = agentStateRef.current;
+    if (currentState === "connecting" || currentState === "connected") {
+      console.warn(`[VoiceAgent] startAgent blocked — already in state: ${currentState}`);
+      return;
+    }
+
     setError(null);
     setTranscript([]);
+    setAgentState("connecting");
+    agentStateRef.current = "connecting";
 
     try {
-      // Request microphone permission first
-      await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log("[VoiceAgent] Starting session...");
 
       const agentId = process.env.NEXT_PUBLIC_ELEVENLABS_AGENT_ID;
 
       if (!agentId) {
-        // Fall back to signed URL for private agents
         const res = await fetch("/api/elevenlabs/signed-url");
-        if (!res.ok) {
-          throw new Error("Failed to get agent connection");
-        }
+        if (!res.ok) throw new Error("Failed to get agent connection");
         const { signedUrl } = await res.json();
+
+        if (!mountedRef.current || agentStateRef.current !== "connecting") return;
         await conversation.startSession({ signedUrl });
       } else {
-        // Public agent — connect directly with agentId
+        if (!mountedRef.current || agentStateRef.current !== "connecting") return;
         await conversation.startSession({
           agentId,
-          connectionType: "websocket",
+          connectionType: "webrtc",
           overrides: {
             agent: {
               prompt: {
@@ -129,26 +182,59 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
           },
         });
       }
+
+      console.log("[VoiceAgent] Session started successfully");
+      // Note: agentState will be set to "connected" by the onConnect callback
     } catch (err) {
-      console.error("Failed to start agent:", err);
-      setError(
-        err instanceof DOMException && err.name === "NotAllowedError"
-          ? "Microphone access is required. Please allow microphone access and try again."
-          : "Failed to connect to voice agent. Please check your connection and try again."
-      );
+      console.error("[VoiceAgent] Failed to start agent:", err);
+      if (!mountedRef.current) return;
+
+      setAgentState("error");
+      agentStateRef.current = "error";
+
+      if (err instanceof DOMException && err.name === "NotAllowedError") {
+        setError("Microphone access is required. Please allow microphone access and try again.");
+      } else {
+        setError("Failed to connect to voice agent. Please check your connection and try again.");
+      }
     }
   }, [conversation, level, topic]);
 
   const stopAgent = useCallback(async () => {
+    const currentState = agentStateRef.current;
+    if (currentState === "idle" || currentState === "disconnecting") {
+      console.warn(`[VoiceAgent] stopAgent blocked — already in state: ${currentState}`);
+      return;
+    }
+
+    console.log("[VoiceAgent] Ending session...");
+    setAgentState("disconnecting");
+    agentStateRef.current = "disconnecting";
+
     try {
       await conversation.endSession();
-    } catch { /* already disconnected */ }
-    onEnd(transcript.length);
-  }, [conversation, onEnd, transcript.length]);
+    } catch {
+      console.warn("[VoiceAgent] endSession threw (likely already disconnected)");
+    }
+
+    if (mountedRef.current) {
+      setAgentState("idle");
+      agentStateRef.current = "idle";
+      setCallEnded(true);
+    }
+  }, [conversation]);
+
+  const finishReview = useCallback(() => {
+    onEnd(transcriptRef.current.length);
+  }, [onEnd]);
+
+  // No automatic cleanup on unmount — the ElevenLabs SDK handles its own
+  // WebSocket teardown, and React Strict Mode's fake unmount/remount cycle
+  // would kill the connection mid-handshake. Session ending is handled
+  // explicitly via stopAgent() or the parent's handleVoiceAgentEnd().
 
   const toggleMute = useCallback(() => {
     setMuted((prev) => {
-      // Toggle volume between 0 and previous volume
       const newMuted = !prev;
       conversation.setVolume({ volume: newMuted ? 0 : volume });
       return newMuted;
@@ -161,8 +247,49 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
     conversation.setVolume({ volume: val });
   }, [conversation]);
 
-  const isConnected = conversation.status === "connected";
+  const isConnected = agentState === "connected";
+  const isStarting = agentState === "connecting";
   const isSpeaking = conversation.isSpeaking;
+
+  // ── Post-call transcript review ──
+  if (callEnded && transcript.length > 0) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-3 w-3 rounded-full bg-gray-400" />
+            <span className="text-sm font-medium">Call ended</span>
+            <Badge>{jlptLevelLabel(level)}</Badge>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted">{topic}</span>
+            <span className="text-sm text-muted jp-text">{topicJp}</span>
+          </div>
+        </div>
+
+        <Card className="py-8 text-center">
+          <PhoneOff className="h-8 w-8 text-muted mx-auto mb-3" />
+          <h3 className="text-lg font-semibold mb-1">Call Ended</h3>
+          <p className="text-sm text-muted mb-4">
+            {transcript.length} messages exchanged. Review your transcript below.
+          </p>
+          <Button onClick={finishReview}>
+            Back to Topics
+          </Button>
+        </Card>
+
+        <TranscriptView
+          transcript={transcript}
+          showTranslation={showTranslation}
+          setShowTranslation={setShowTranslation}
+          playingTranslation={playingTranslation}
+          onPlayTranslation={playEnglishTranslation}
+          isLive={false}
+          isSpeaking={false}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -175,7 +302,9 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
                 ? isSpeaking
                   ? "bg-emerald-500 animate-pulse"
                   : "bg-emerald-500"
-                : "bg-gray-400"
+                : isStarting
+                  ? "bg-amber-500 animate-pulse"
+                  : "bg-gray-400"
             }`}
           />
           <span className="text-sm font-medium">
@@ -183,7 +312,9 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
               ? isSpeaking
                 ? "Agent is speaking..."
                 : "Listening..."
-              : "Disconnected"}
+              : isStarting
+                ? "Connecting..."
+                : "Disconnected"}
           </span>
           <Badge>{jlptLevelLabel(level)}</Badge>
         </div>
@@ -198,9 +329,11 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
         {error ? (
           <div className="space-y-4">
             <p className="text-red-500 text-sm">{error}</p>
-            <Button onClick={startAgent}>Try Again</Button>
+            <Button onClick={startAgent} disabled={isStarting}>
+              Try Again
+            </Button>
           </div>
-        ) : !isConnected ? (
+        ) : !isConnected && !isStarting ? (
           <div className="space-y-6">
             <div className="mx-auto w-24 h-24 rounded-full bg-primary/10 flex items-center justify-center">
               <Phone className="h-10 w-10 text-primary" />
@@ -216,6 +349,15 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
             <Button size="lg" onClick={startAgent}>
               <Phone className="h-5 w-5" /> Start Voice Session
             </Button>
+          </div>
+        ) : isStarting ? (
+          <div className="space-y-6">
+            <div className="mx-auto w-24 h-24 rounded-full bg-primary/10 flex items-center justify-center">
+              <Loader2 className="h-10 w-10 text-primary animate-spin" />
+            </div>
+            <p className="text-sm text-muted">
+              Connecting to agent...
+            </p>
           </div>
         ) : (
           <div className="space-y-8">
@@ -276,115 +418,102 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
 
       {/* Live transcript */}
       {transcript.length > 0 && (
-        <Card>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-muted uppercase tracking-wide">
-              Transcript
-            </h3>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowTranslation((prev) => !prev)}
-              className="text-xs"
-            >
-              <Languages className="h-3.5 w-3.5" />
-              {showTranslation ? "Hide English Translation" : "Show English Translation"}
-            </Button>
-          </div>
-          <div className="space-y-3 max-h-64 overflow-y-auto">
-            {transcript.map((entry, i) => {
-              const { japanese, english } = parseTranslation(entry.content);
-              return (
-                <div
-                  key={i}
-                  className={`flex ${entry.role === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm ${
-                      entry.role === "user"
-                        ? "bg-primary text-white"
-                        : "bg-background border border-border"
-                    }`}
-                  >
-                    <p className="jp-text whitespace-pre-wrap">{japanese}</p>
-                    {showTranslation && english && entry.role === "assistant" && (
-                      <div className="mt-1.5 border-t border-border pt-1.5 flex items-start gap-2">
-                        <p className="text-xs text-muted italic flex-1">{english}</p>
-                        <button
-                          onClick={() => playEnglishTranslation(english, i)}
-                          disabled={playingTranslation !== null}
-                          className="shrink-0 rounded-full p-1 text-muted hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
-                          title="Play English translation"
-                        >
-                          {playingTranslation === i ? (
-                            <Volume2 className="h-3.5 w-3.5 animate-pulse" />
-                          ) : (
-                            <Play className="h-3.5 w-3.5" />
-                          )}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-            {isConnected && isSpeaking && (
-              <div className="flex justify-start">
-                <div className="rounded-2xl bg-background border border-border px-4 py-2">
-                  <LoadingDots />
-                </div>
-              </div>
-            )}
-          </div>
-        </Card>
+        <TranscriptView
+          transcript={transcript}
+          showTranslation={showTranslation}
+          setShowTranslation={setShowTranslation}
+          playingTranslation={playingTranslation}
+          onPlayTranslation={playEnglishTranslation}
+          isLive={true}
+          isSpeaking={isConnected && isSpeaking}
+        />
       )}
     </div>
   );
 }
 
-/**
- * Parse assistant messages to separate Japanese content from English translation.
- * Handles multiple inline (English) segments scattered throughout the text,
- * as well as [EN: ...] blocks and English-only trailing lines.
- */
-function parseTranslation(content: string): { japanese: string; english: string } {
-  const englishParts: string[] = [];
+// ── Shared transcript display component ──
 
-  // Extract all parenthesized segments that look like English (contain mostly Latin chars)
-  let japanese = content.replace(/\(([^)]{3,})\)/g, (_match, inner: string) => {
-    const latinRatio = (inner.match(/[A-Za-z]/g) || []).length / inner.length;
-    if (latinRatio > 0.4) {
-      englishParts.push(inner.trim());
-      return "";
-    }
-    return _match; // Keep non-English parenthetical content (e.g. Japanese in parens)
-  });
-
-  // Extract [EN: ...] blocks
-  japanese = japanese.replace(/\[EN:\s*([\s\S]*?)\]/g, (_match, inner: string) => {
-    englishParts.push(inner.trim());
-    return "";
-  });
-
-  // Check if the last line is English text (no parens/brackets)
-  const lines = japanese.split("\n").filter((l) => l.trim());
-  if (lines.length >= 2 && englishParts.length === 0) {
-    const lastLine = lines[lines.length - 1].trim();
-    const latinRatio = (lastLine.match(/[A-Za-z]/g) || []).length / Math.max(lastLine.length, 1);
-    if (latinRatio > 0.5) {
-      englishParts.push(lastLine);
-      lines.pop();
-      japanese = lines.join("\n");
-    }
-  }
-
-  // Clean up extra whitespace and trailing punctuation artifacts
-  japanese = japanese.replace(/\s{2,}/g, " ").replace(/\n\s*\n/g, "\n").trim();
-
-  return {
-    japanese,
-    english: englishParts.join(" "),
-  };
+function TranscriptView({
+  transcript,
+  showTranslation,
+  setShowTranslation,
+  playingTranslation,
+  onPlayTranslation,
+  isLive,
+  isSpeaking,
+}: {
+  transcript: TranscriptEntry[];
+  showTranslation: boolean;
+  setShowTranslation: (fn: (prev: boolean) => boolean) => void;
+  playingTranslation: number | null;
+  onPlayTranslation: (text: string, index: number) => void;
+  isLive: boolean;
+  isSpeaking: boolean;
+}) {
+  return (
+    <Card>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-muted uppercase tracking-wide">
+          Transcript
+        </h3>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowTranslation((prev) => !prev)}
+          className="text-xs"
+        >
+          <Languages className="h-3.5 w-3.5" />
+          {showTranslation ? "Hide English Translation" : "Show English Translation"}
+        </Button>
+      </div>
+      <div className={`space-y-3 overflow-y-auto ${isLive ? "max-h-64" : "max-h-[60vh]"}`}>
+        {transcript.map((entry, i) => {
+          const { japanese, english } = parseTranslation(entry.content);
+          return (
+            <div
+              key={i}
+              className={`flex ${entry.role === "user" ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm ${
+                  entry.role === "user"
+                    ? "bg-primary text-white"
+                    : "bg-background border border-border"
+                }`}
+              >
+                <p className="jp-text whitespace-pre-wrap">{japanese}</p>
+                {showTranslation && english && entry.role === "assistant" && (
+                  <div className="mt-1.5 border-t border-border pt-1.5 flex items-start gap-2">
+                    <p className="text-xs text-muted italic flex-1">{english}</p>
+                    <button
+                      onClick={() => onPlayTranslation(english, i)}
+                      disabled={playingTranslation !== null}
+                      className="shrink-0 rounded-full p-1 text-muted hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+                      title="Play English translation"
+                    >
+                      {playingTranslation === i ? (
+                        <Volume2 className="h-3.5 w-3.5 animate-pulse" />
+                      ) : (
+                        <Play className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        {isLive && isSpeaking && (
+          <div className="flex justify-start">
+            <div className="rounded-2xl bg-background border border-border px-4 py-2">
+              <LoadingDots />
+            </div>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
 }
 
 function buildAgentContext(level: number, topic: string): string {
@@ -426,4 +555,3 @@ Guidelines:
 - Stay on the topic of "${topic}" but explore different angles of it
 - Adjust complexity to N${level} level`;
 }
-

@@ -1,27 +1,36 @@
 "use client";
 
 import { useState } from "react";
-import { BookOpen, MessageCircle, Mic, Clock } from "lucide-react";
+import { BookOpen, MessageCircle, Mic, ChevronRight, X, Languages, Volume2, Play } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { jlptLevelLabel, formatRelativeTime, formatDuration } from "@/lib/utils";
+import { jlptLevelLabel, formatRelativeTime } from "@/lib/utils";
+import { parseTranslation } from "@/lib/conversation-utils";
 
-type Tab = "all" | "vocab" | "conversations" | "pronunciation";
+type Tab = "vocab" | "conversations" | "pronunciation";
+
+interface ConversationMessage {
+  id: string;
+  role: string;
+  content: string;
+  createdAt: string;
+}
+
+interface ConversationSession {
+  id: string;
+  topic: string;
+  jlptLevel: number;
+  mode: string;
+  status: string;
+  messageCount: number;
+  startedAt: string;
+  summary: string | null;
+  messages: ConversationMessage[];
+}
 
 interface Props {
-  studySessions: Array<{
-    id: string;
-    sessionType: string;
-    jlptLevel: number;
-    status: string;
-    wordsPracticed: number;
-    totalWords: number;
-    durationSeconds: number | null;
-    startedAt: string;
-    summary: string | null;
-  }>;
   savedVocabulary: Array<{
     id: string;
     word: string;
@@ -33,16 +42,7 @@ interface Props {
     lastStudiedAt: string | null;
     createdAt: string;
   }>;
-  conversationSessions: Array<{
-    id: string;
-    topic: string;
-    jlptLevel: number;
-    mode: string;
-    status: string;
-    messageCount: number;
-    startedAt: string;
-    summary: string | null;
-  }>;
+  conversationSessions: ConversationSession[];
   pronunciationAttempts: Array<{
     id: string;
     word: string;
@@ -54,15 +54,49 @@ interface Props {
   }>;
 }
 
-export function HistoryClient({ studySessions, savedVocabulary, conversationSessions, pronunciationAttempts }: Props) {
-  const [tab, setTab] = useState<Tab>("all");
+export function HistoryClient({ savedVocabulary, conversationSessions, pronunciationAttempts }: Props) {
+  const [tab, setTab] = useState<Tab>("conversations");
+  const [selectedConversation, setSelectedConversation] = useState<ConversationSession | null>(null);
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: "all", label: "All Sessions", icon: <Clock className="h-4 w-4" /> },
     { id: "vocab", label: "Vocabulary", icon: <BookOpen className="h-4 w-4" /> },
     { id: "conversations", label: "Conversations", icon: <MessageCircle className="h-4 w-4" /> },
     { id: "pronunciation", label: "Pronunciation", icon: <Mic className="h-4 w-4" /> },
   ];
+
+  // ── Conversation transcript detail view ──
+  if (selectedConversation) {
+    return (
+      <div className="animate-fade-in space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">{selectedConversation.topic}</h1>
+            <p className="text-muted flex items-center gap-2 mt-1">
+              <Badge>{jlptLevelLabel(selectedConversation.jlptLevel)}</Badge>
+              <span>{selectedConversation.messageCount} messages</span>
+              <span>·</span>
+              <span>{selectedConversation.mode.toLowerCase().replace("_", " ")}</span>
+              <span>·</span>
+              <span>{formatRelativeTime(selectedConversation.startedAt)}</span>
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => setSelectedConversation(null)}>
+            <X className="h-4 w-4" /> Back
+          </Button>
+        </div>
+
+        {selectedConversation.messages.length === 0 ? (
+          <EmptyState
+            icon={<MessageCircle className="h-10 w-10" />}
+            title="No transcript available"
+            description="This conversation has no saved messages"
+          />
+        ) : (
+          <ConversationTranscript messages={selectedConversation.messages} />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -84,59 +118,6 @@ export function HistoryClient({ studySessions, savedVocabulary, conversationSess
           </Button>
         ))}
       </div>
-
-      {tab === "all" && (
-        <section>
-          <h2 className="text-lg font-semibold mb-3">Study Sessions</h2>
-          {studySessions.length === 0 ? (
-            <EmptyState
-              icon={<BookOpen className="h-10 w-10" />}
-              title="No study sessions yet"
-              description="Start a vocabulary or pronunciation session to see history here"
-            />
-          ) : (
-            <div className="space-y-3">
-              {studySessions.map((session) => (
-                  <Card key={session.id}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="rounded-lg bg-primary/10 p-2 text-primary">
-                          {session.sessionType === "VOCABULARY" ? (
-                            <BookOpen className="h-5 w-5" />
-                          ) : session.sessionType === "PRONUNCIATION" ? (
-                            <Mic className="h-5 w-5" />
-                          ) : (
-                            <MessageCircle className="h-5 w-5" />
-                          )}
-                        </div>
-                        <div>
-                          <p className="font-medium capitalize">
-                            {session.sessionType.toLowerCase()} session
-                          </p>
-                          <p className="text-sm text-muted">
-                            {session.wordsPracticed}/{session.totalWords} words
-                            {session.durationSeconds ? ` · ${formatDuration(session.durationSeconds)}` : ""}
-                            {" · "}
-                            {formatRelativeTime(session.startedAt)}
-                          </p>
-                          {session.summary && (
-                            <p className="text-xs text-muted mt-1">{session.summary}</p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge>{jlptLevelLabel(session.jlptLevel)}</Badge>
-                        <Badge variant={session.status === "COMPLETED" ? "success" : session.status === "IN_PROGRESS" ? "info" : "warning"}>
-                          {session.status === "COMPLETED" ? "Done" : session.status === "IN_PROGRESS" ? "In progress" : "Abandoned"}
-                        </Badge>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
-            </div>
-          )}
-        </section>
-      )}
 
       {tab === "vocab" && (
         <section>
@@ -186,9 +167,8 @@ export function HistoryClient({ studySessions, savedVocabulary, conversationSess
         </section>
       )}
 
-      {(tab === "all" || tab === "conversations") && (
+      {tab === "conversations" && (
         <section>
-          {tab === "all" && <h2 className="text-lg font-semibold mb-3 mt-6">Conversations</h2>}
           {conversationSessions.length === 0 ? (
             <EmptyState
               icon={<MessageCircle className="h-10 w-10" />}
@@ -198,7 +178,13 @@ export function HistoryClient({ studySessions, savedVocabulary, conversationSess
           ) : (
             <div className="space-y-3">
               {conversationSessions.map((conv) => (
-                <Card key={conv.id}>
+                <Card
+                  key={conv.id}
+                  className={conv.messages.length > 0 ? "cursor-pointer hover:border-primary/30 transition-colors" : ""}
+                  onClick={() => {
+                    if (conv.messages.length > 0) setSelectedConversation(conv);
+                  }}
+                >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className="rounded-lg bg-violet-100 p-2 text-violet-600">
@@ -219,6 +205,9 @@ export function HistoryClient({ studySessions, savedVocabulary, conversationSess
                       <Badge variant={conv.status === "COMPLETED" ? "success" : "info"}>
                         {conv.status === "COMPLETED" ? "Done" : "In progress"}
                       </Badge>
+                      {conv.messages.length > 0 && (
+                        <ChevronRight className="h-4 w-4 text-muted" />
+                      )}
                     </div>
                   </div>
                 </Card>
@@ -228,9 +217,8 @@ export function HistoryClient({ studySessions, savedVocabulary, conversationSess
         </section>
       )}
 
-      {(tab === "all" || tab === "pronunciation") && (
+      {tab === "pronunciation" && (
         <section>
-          {tab === "all" && <h2 className="text-lg font-semibold mb-3 mt-6">Pronunciation Attempts</h2>}
           {pronunciationAttempts.length === 0 ? (
             <EmptyState
               icon={<Mic className="h-10 w-10" />}
@@ -269,5 +257,100 @@ export function HistoryClient({ studySessions, savedVocabulary, conversationSess
         </section>
       )}
     </div>
+  );
+}
+
+// ── Conversation transcript viewer for history ──
+
+function ConversationTranscript({ messages }: { messages: ConversationMessage[] }) {
+  const [showTranslation, setShowTranslation] = useState(false);
+  const [playingTranslation, setPlayingTranslation] = useState<number | null>(null);
+
+  async function playTranslation(text: string, index: number) {
+    if (playingTranslation !== null) return;
+    setPlayingTranslation(index);
+    try {
+      const res = await fetch("/api/elevenlabs/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.onended = () => {
+          setPlayingTranslation(null);
+          URL.revokeObjectURL(url);
+        };
+        audio.onerror = () => setPlayingTranslation(null);
+        await audio.play();
+      } else {
+        setPlayingTranslation(null);
+      }
+    } catch {
+      setPlayingTranslation(null);
+    }
+  }
+
+  // Filter out SYSTEM messages
+  const visibleMessages = messages.filter((m) => m.role !== "SYSTEM");
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-muted uppercase tracking-wide">
+          Transcript
+        </h3>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowTranslation((prev) => !prev)}
+          className="text-xs"
+        >
+          <Languages className="h-3.5 w-3.5" />
+          {showTranslation ? "Hide English Translation" : "Show English Translation"}
+        </Button>
+      </div>
+      <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+        {visibleMessages.map((msg, i) => {
+          const isUser = msg.role === "USER";
+          const { japanese, english } = parseTranslation(msg.content);
+          return (
+            <div
+              key={msg.id}
+              className={`flex ${isUser ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm ${
+                  isUser
+                    ? "bg-primary text-white"
+                    : "bg-background border border-border"
+                }`}
+              >
+                <p className="jp-text whitespace-pre-wrap">{japanese}</p>
+                {showTranslation && english && !isUser && (
+                  <div className="mt-1.5 border-t border-border pt-1.5 flex items-start gap-2">
+                    <p className="text-xs text-muted italic flex-1">{english}</p>
+                    <button
+                      onClick={() => playTranslation(english, i)}
+                      disabled={playingTranslation !== null}
+                      className="shrink-0 rounded-full p-1 text-muted hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+                      title="Play English translation"
+                    >
+                      {playingTranslation === i ? (
+                        <Volume2 className="h-3.5 w-3.5 animate-pulse" />
+                      ) : (
+                        <Play className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
   );
 }
