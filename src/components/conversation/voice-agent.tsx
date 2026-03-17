@@ -35,7 +35,7 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
   const [showTranslation, setShowTranslation] = useState(false);
   const [playingTranslation, setPlayingTranslation] = useState<number | null>(null);
   const [agentState, setAgentState] = useState<AgentState>("idle");
-  const [callEnded, setCallEnded] = useState(false);
+  const [conversationEnded, setConversationEnded] = useState(false);
 
   // Refs to avoid stale closures and track lifecycle across async boundaries
   const transcriptRef = useRef<TranscriptEntry[]>([]);
@@ -143,7 +143,7 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
     },
   });
 
-  const startAgent = useCallback(async () => {
+  const startAgent = useCallback(async (options?: { keepTranscript?: boolean }) => {
     // Guard: prevent duplicate initialization
     const currentState = agentStateRef.current;
     if (currentState === "connecting" || currentState === "connected") {
@@ -152,7 +152,7 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
     }
 
     setError(null);
-    setTranscript([]);
+    if (!options?.keepTranscript) setTranscript([]);
     setAgentState("connecting");
     agentStateRef.current = "connecting";
 
@@ -220,13 +220,19 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
     if (mountedRef.current) {
       setAgentState("idle");
       agentStateRef.current = "idle";
-      setCallEnded(true);
+      setConversationEnded(true);
     }
   }, [conversation]);
 
   const finishReview = useCallback(() => {
     onEnd(transcriptRef.current.length);
   }, [onEnd]);
+
+  const resumeConversation = useCallback(() => {
+    setConversationEnded(false);
+    setError(null);
+    startAgent({ keepTranscript: true });
+  }, [startAgent]);
 
   // No automatic cleanup on unmount — the ElevenLabs SDK handles its own
   // WebSocket teardown, and React Strict Mode's fake unmount/remount cycle
@@ -251,14 +257,14 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
   const isStarting = agentState === "connecting";
   const isSpeaking = conversation.isSpeaking;
 
-  // ── Post-call transcript review ──
-  if (callEnded && transcript.length > 0) {
+  // ── Post-conversation transcript review ──
+  if (conversationEnded && transcript.length > 0) {
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="h-3 w-3 rounded-full bg-gray-400" />
-            <span className="text-sm font-medium">Call ended</span>
+            <span className="text-sm font-medium">Conversation ended</span>
             <Badge>{jlptLevelLabel(level)}</Badge>
           </div>
           <div className="flex items-center gap-2">
@@ -269,13 +275,18 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
 
         <Card className="py-8 text-center">
           <PhoneOff className="h-8 w-8 text-muted mx-auto mb-3" />
-          <h3 className="text-lg font-semibold mb-1">Call Ended</h3>
+          <h3 className="text-lg font-semibold mb-1">Conversation Ended</h3>
           <p className="text-sm text-muted mb-4">
             {transcript.length} messages exchanged. Review your transcript below.
           </p>
-          <Button onClick={finishReview}>
-            Back to Topics
-          </Button>
+          <div className="flex items-center justify-center gap-3">
+            <Button variant="secondary" onClick={finishReview}>
+              Back to Topics
+            </Button>
+            <Button onClick={resumeConversation}>
+              <Phone className="h-4 w-4" /> Resume Conversation
+            </Button>
+          </div>
         </Card>
 
         <TranscriptView
@@ -329,7 +340,7 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
         {error ? (
           <div className="space-y-4">
             <p className="text-red-500 text-sm">{error}</p>
-            <Button onClick={startAgent} disabled={isStarting}>
+            <Button onClick={() => startAgent()} disabled={isStarting}>
               Try Again
             </Button>
           </div>
@@ -346,7 +357,7 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
                 Speak naturally — the agent will listen and respond.
               </p>
             </div>
-            <Button size="lg" onClick={startAgent}>
+            <Button size="lg" onClick={() => startAgent()}>
               <Phone className="h-5 w-5" /> Start Voice Session
             </Button>
           </div>
@@ -409,7 +420,7 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
               />
 
               <Button variant="danger" size="lg" onClick={stopAgent}>
-                <PhoneOff className="h-5 w-5" /> End Call
+                <PhoneOff className="h-5 w-5" /> End Conversation
               </Button>
             </div>
           </div>
@@ -532,23 +543,19 @@ Topic: ${topic}
 ${levelGuide[level] || levelGuide[5]}
 
 CRITICAL — Language rules:
-- Your VOICE output must be ENTIRELY in Japanese. Do NOT speak any English words aloud.
-- After your complete Japanese response, include an English translation in parentheses at the very end.
-- Format: [All your Japanese sentences here] (English translation of everything you just said)
-- The English in parentheses is for the text transcript only — it will not be spoken aloud.
-- NEVER mix English into the middle of your Japanese sentences.
+- Speak ONLY in Japanese. Never use English in any part of your response.
+- Do NOT provide English translations, explanations, or parenthetical notes.
+- Every word you output must be Japanese.
 
 Introduction (your very first message only):
-- Greet the student IN JAPANESE and tell them your name. Use your actual name from your ElevenLabs agent configuration. Say "私の名前は[your name]です".
-- Explain IN JAPANESE that you are an AI voice agent powered by ElevenLabs, here to help practice Japanese conversation for JLPT N${level}
-- Mention IN JAPANESE that they can speak naturally and you will respond in real time
+- Greet the student and introduce yourself as ふみ (Fumi). Say "私の名前はふみです。よろしくお願いします。"
+- Briefly explain that you are here to help practice Japanese conversation for JLPT N${level}
 - Transition into the topic "${topic}" with an opening question
-- Put the full English translation at the end in parentheses
 
 Guidelines:
 - ALWAYS end your response with a question to keep the conversation going
 - Lead the conversation — don't wait for the student to drive it
-- Keep responses concise (2-3 sentences max in Japanese, then your question)
+- Keep responses concise (2-3 sentences max, then your question)
 - If the student gives a short answer, build on it and ask a related follow-up
 - Gently correct pronunciation and grammar mistakes inline, then continue
 - Be encouraging and natural — react to what they say before asking the next question
