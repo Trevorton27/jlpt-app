@@ -8,7 +8,6 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { LoadingDots } from "@/components/ui/loading";
 import { jlptLevelLabel } from "@/lib/utils";
-import { parseTranslation } from "@/lib/conversation-utils";
 
 interface VoiceAgentProps {
   level: number;
@@ -33,6 +32,8 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(0.8);
   const [showTranslation, setShowTranslation] = useState(false);
+  const [translations, setTranslations] = useState<Record<number, string>>({});
+  const [translating, setTranslating] = useState(false);
   const [playingTranslation, setPlayingTranslation] = useState<number | null>(null);
   const [agentState, setAgentState] = useState<AgentState>("idle");
   const [conversationEnded, setConversationEnded] = useState(false);
@@ -69,6 +70,44 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
   const safeSetTranscript = safeSetState(setTranscript);
   const safeSetError = safeSetState(setError);
   const safeSetAgentState = safeSetState(setAgentState);
+
+  // Fetch translations on-demand when the toggle is enabled
+  useEffect(() => {
+    if (!showTranslation) return;
+
+    const untranslated = transcript
+      .map((entry, i) => ({ entry, i }))
+      .filter(({ entry, i }) => entry.role === "assistant" && !(i in translations));
+
+    if (untranslated.length === 0) return;
+
+    let cancelled = false;
+    setTranslating(true);
+
+    Promise.all(
+      untranslated.map(async ({ entry, i }) => {
+        try {
+          const res = await fetch("/api/translate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: entry.content }),
+          });
+          if (res.ok) {
+            const { translation } = await res.json();
+            if (!cancelled) {
+              setTranslations((prev) => ({ ...prev, [i]: translation }));
+            }
+          }
+        } catch {
+          // silently skip failed translations
+        }
+      })
+    ).finally(() => {
+      if (!cancelled) setTranslating(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [showTranslation, transcript, translations]);
 
   async function playEnglishTranslation(text: string, index: number) {
     if (playingTranslation !== null) return;
@@ -293,6 +332,8 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
           transcript={transcript}
           showTranslation={showTranslation}
           setShowTranslation={setShowTranslation}
+          translations={translations}
+          translating={translating}
           playingTranslation={playingTranslation}
           onPlayTranslation={playEnglishTranslation}
           isLive={false}
@@ -433,6 +474,8 @@ export function VoiceAgent({ level, topic, topicJp, sessionId, onEnd }: VoiceAge
           transcript={transcript}
           showTranslation={showTranslation}
           setShowTranslation={setShowTranslation}
+          translations={translations}
+          translating={translating}
           playingTranslation={playingTranslation}
           onPlayTranslation={playEnglishTranslation}
           isLive={true}
@@ -449,6 +492,8 @@ function TranscriptView({
   transcript,
   showTranslation,
   setShowTranslation,
+  translations,
+  translating,
   playingTranslation,
   onPlayTranslation,
   isLive,
@@ -457,6 +502,8 @@ function TranscriptView({
   transcript: TranscriptEntry[];
   showTranslation: boolean;
   setShowTranslation: (fn: (prev: boolean) => boolean) => void;
+  translations: Record<number, string>;
+  translating: boolean;
   playingTranslation: number | null;
   onPlayTranslation: (text: string, index: number) => void;
   isLive: boolean;
@@ -476,11 +523,14 @@ function TranscriptView({
         >
           <Languages className="h-3.5 w-3.5" />
           {showTranslation ? "Hide English Translation" : "Show English Translation"}
+          {showTranslation && translating && (
+            <Loader2 className="h-3 w-3 animate-spin ml-1" />
+          )}
         </Button>
       </div>
       <div className={`space-y-3 overflow-y-auto ${isLive ? "max-h-64" : "max-h-[60vh]"}`}>
         {transcript.map((entry, i) => {
-          const { japanese, english } = parseTranslation(entry.content);
+          const english = translations[i];
           return (
             <div
               key={i}
@@ -493,22 +543,28 @@ function TranscriptView({
                     : "bg-background border border-border"
                 }`}
               >
-                <p className="jp-text whitespace-pre-wrap">{japanese}</p>
-                {showTranslation && english && entry.role === "assistant" && (
+                <p className="jp-text whitespace-pre-wrap">{entry.content}</p>
+                {showTranslation && entry.role === "assistant" && (
                   <div className="mt-1.5 border-t border-border pt-1.5 flex items-start gap-2">
-                    <p className="text-xs text-muted italic flex-1">{english}</p>
-                    <button
-                      onClick={() => onPlayTranslation(english, i)}
-                      disabled={playingTranslation !== null}
-                      className="shrink-0 rounded-full p-1 text-muted hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
-                      title="Play English translation"
-                    >
-                      {playingTranslation === i ? (
-                        <Volume2 className="h-3.5 w-3.5 animate-pulse" />
-                      ) : (
-                        <Play className="h-3.5 w-3.5" />
-                      )}
-                    </button>
+                    {english ? (
+                      <>
+                        <p className="text-xs text-muted italic flex-1">{english}</p>
+                        <button
+                          onClick={() => onPlayTranslation(english, i)}
+                          disabled={playingTranslation !== null}
+                          className="shrink-0 rounded-full p-1 text-muted hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+                          title="Play English translation"
+                        >
+                          {playingTranslation === i ? (
+                            <Volume2 className="h-3.5 w-3.5 animate-pulse" />
+                          ) : (
+                            <Play className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted italic">Translating...</p>
+                    )}
                   </div>
                 )}
               </div>
