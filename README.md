@@ -22,12 +22,12 @@ A Next.js application for Japanese Language Proficiency Test (JLPT) preparation 
 - Track study count and last-studied date per word
 
 ### Voice Conversation
-- Real-time voice conversation with an AI partner powered by ElevenLabs Conversational AI (WebRTC)
+- Real-time voice conversation with an AI partner (ふみ / Fumi) powered by ElevenLabs Conversational AI (WebRTC)
 - 15 level-appropriate conversation topics (self-introduction, shopping, travel, work, current events, etc.)
-- Agent speaks entirely in Japanese, adapted to the user's JLPT level
-- Live transcript with Japanese/English separation — English translations are hidden by default and togglable
+- Agent speaks exclusively in Japanese — no English is spoken aloud, adapted to the user's JLPT level
+- Live transcript displays Japanese text; English translations are fetched on-demand via translation API when the user toggles "Show English Translation"
 - Play English translations via TTS for listening practice
-- Post-call transcript review screen persists after the call ends
+- Post-conversation transcript review with option to resume the conversation or return to topics
 - Full conversation transcripts saved to database for future review in History
 - Dynamic system prompts instruct the agent to lead conversations, correct mistakes, and always ask follow-up questions
 
@@ -96,10 +96,11 @@ A Next.js application for Japanese Language Proficiency Test (JLPT) preparation 
 
 - `src/components/conversation/voice-agent.tsx` uses the `@elevenlabs/react` SDK to open a WebRTC connection to an ElevenLabs Conversational AI agent
 - On session start, the agent receives a dynamic system prompt (built by `buildAgentContext()`) tailored to the user's JLPT level and chosen topic
-- The agent introduces itself in Japanese, leads the conversation, corrects mistakes, and always ends with a follow-up question
-- English translations are appended in parentheses for the text transcript only (not spoken aloud)
+- The agent introduces itself as ふみ (Fumi) and speaks exclusively in Japanese — no English output
+- English translations are fetched on-demand from `POST /api/translate` when the user toggles "Show English Translation"; translations are cached per-message to avoid redundant requests
 - Transcript entries are persisted to the database via `POST /api/conversation/message`
 - Connection lifecycle managed with state machine: idle → connecting → connected → disconnecting
+- After ending a conversation, users can resume the session (reconnects while preserving the transcript) or return to topics
 - For private agents, a signed URL is fetched server-side from `GET /api/elevenlabs/signed-url`
 
 **Packages:** `@elevenlabs/react` v0.14, `@elevenlabs/client` v0.15
@@ -120,7 +121,24 @@ A Next.js application for Japanese Language Proficiency Test (JLPT) preparation 
 
 ---
 
-### 4. JLPT Vocabulary API
+### 4. MyMemory Translation API
+
+**Purpose:** On-demand Japanese-to-English translation for voice conversation transcripts.
+
+- API route at `POST /api/translate` accepts `{ text }` and returns `{ translation }`
+- Calls the MyMemory API (`api.mymemory.translated.net`) with `langpair=ja|en`
+- Free tier (no API key required) — supports up to 5,000 characters/day
+- Translations are fetched lazily when the user toggles "Show English Translation" in the voice agent transcript
+- Results are cached in component state so each message is only translated once per session
+
+**Endpoint:**
+```
+GET https://api.mymemory.translated.net/get?q={text}&langpair=ja|en
+```
+
+---
+
+### 5. JLPT Vocabulary API
 
 **Purpose:** Curated JLPT vocabulary word lists organized by level (N5–N1).
 
@@ -140,7 +158,7 @@ GET https://jlpt-vocab-api.vercel.app/api/words?keyword={query}
 
 ---
 
-### 5. Prisma + PostgreSQL (Neon)
+### 6. Prisma + PostgreSQL (Neon)
 
 **Purpose:** Application database for user data, saved vocabulary, study sessions, pronunciation attempts, and conversation history.
 
@@ -177,6 +195,7 @@ GET https://jlpt-vocab-api.vercel.app/api/words?keyword={query}
 | `/api/conversation/message` | POST | Prisma | Save conversation messages |
 | `/api/elevenlabs/tts` | POST | ElevenLabs | Generate Japanese speech audio |
 | `/api/elevenlabs/signed-url` | GET | ElevenLabs | Get WebRTC signed URL for voice agent |
+| `/api/translate` | POST | MyMemory | Translate Japanese text to English on-demand |
 
 All routes require Clerk authentication.
 
@@ -201,11 +220,11 @@ All routes require Clerk authentication.
 ### Voice Conversation
 1. User selects topic and level → `ConversationSession` created in **PostgreSQL**
 2. WebRTC connection opened to **ElevenLabs Voice Agent** with level-appropriate system prompt
-3. Agent introduces itself in Japanese and begins with a topic-relevant question
+3. Agent introduces itself as ふみ (Fumi) in Japanese and begins with a topic-relevant question
 4. Real-time speech recognition, LLM generation, and TTS happen on ElevenLabs infrastructure
-5. Live transcript displays with Japanese/English parsing and optional translation toggle
+5. Live transcript displays Japanese text; toggling "Show English Translation" fetches translations from **MyMemory API** via `/api/translate`
 6. Transcript messages persisted to `ConversationMessage` in **PostgreSQL**
-7. After call ends, transcript remains visible for review
+7. After conversation ends, user can resume the conversation or return to topics; transcript remains visible for review
 8. Past conversations accessible from **History** page with full transcript replay
 
 ---
@@ -232,7 +251,8 @@ src/
 │       ├── sessions/                     # Study sessions, stats, preferences
 │       ├── pronunciation/                # Attempts + grading
 │       ├── conversation/                 # Sessions + messages
-│       └── elevenlabs/                   # TTS + signed URL
+│       ├── elevenlabs/                   # TTS + signed URL
+│       └── translate/                    # On-demand Japanese→English translation
 ├── components/
 │   ├── ui/                               # Button, Card, Badge, LevelSelector, etc.
 │   ├── layout/                           # Sidebar, MobileNav, TopBar
@@ -244,7 +264,7 @@ src/
 │   ├── jlpt-api.ts                       # External JLPT vocab API wrapper
 │   ├── elevenlabs.ts                     # TTS + system prompt generation
 │   ├── google-stt.ts                     # Speech-to-text + grading
-│   └── conversation-utils.ts             # parseTranslation (JP/EN separation)
+│   └── conversation-utils.ts             # parseTranslation (JP/EN separation for text chat & history)
 ├── types/
 │   ├── vocab.ts                          # JlptWord interface
 │   └── conversation.ts                   # ConversationTopic + 15 topic definitions
