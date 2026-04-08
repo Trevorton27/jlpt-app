@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
+import { getEffectiveElevenLabsConfig } from "@/lib/elevenlabs";
 
 export async function GET() {
   const { userId } = await auth();
@@ -8,12 +9,18 @@ export async function GET() {
   }
 
   const agentId = process.env.ELEVENLABS_AGENT_ID;
-  const apiKey = process.env.ELEVENLABS_API_KEY;
-
-  if (!agentId || !apiKey) {
+  if (!agentId) {
     return NextResponse.json(
       { error: "ElevenLabs agent not configured" },
       { status: 500 }
+    );
+  }
+
+  const config = await getEffectiveElevenLabsConfig(userId);
+  if (!config) {
+    return NextResponse.json(
+      { error: "No ElevenLabs API key connected. Add one in Settings." },
+      { status: 400 }
     );
   }
 
@@ -21,7 +28,7 @@ export async function GET() {
     const res = await fetch(
       `https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=${agentId}`,
       {
-        headers: { "xi-api-key": apiKey },
+        headers: { "xi-api-key": config.apiKey },
       }
     );
 

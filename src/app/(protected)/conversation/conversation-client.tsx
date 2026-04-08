@@ -9,7 +9,7 @@ import { LevelSelector } from "@/components/ui/level-selector";
 import { LoadingDots } from "@/components/ui/loading";
 import { jlptLevelLabel } from "@/lib/utils";
 import { getTopicsForLevel, ConversationTopic } from "@/types/conversation";
-import { getConversationSystemPrompt } from "@/lib/elevenlabs";
+import { getConversationSystemPrompt } from "@/lib/conversation-utils";
 import { VoiceAgent } from "@/components/conversation/voice-agent";
 
 interface Message {

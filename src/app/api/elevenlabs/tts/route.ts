@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { generateSpeech } from "@/lib/elevenlabs";
+import { generateSpeech, getEffectiveElevenLabsConfig } from "@/lib/elevenlabs";
 
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
@@ -10,15 +10,25 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { text, speed } = body;
+    const { text, speed, voiceId } = body;
 
     if (!text || typeof text !== "string") {
       return NextResponse.json({ error: "Text is required" }, { status: 400 });
     }
 
+    const config = await getEffectiveElevenLabsConfig(userId, voiceId);
+    if (!config) {
+      return NextResponse.json(
+        { error: "No ElevenLabs API key connected. Add one in Settings." },
+        { status: 400 }
+      );
+    }
+
     const audioBuffer = await generateSpeech({
       text,
       speed: speed || 1.0,
+      voiceId: voiceId || config.defaultVoiceId,
+      apiKey: config.apiKey,
     });
 
     return new NextResponse(audioBuffer, {

@@ -21,8 +21,23 @@ model UserProfile {
   studySessions         StudySession[]
   pronunciationAttempts PronunciationAttempt[]
   conversationSessions  ConversationSession[]
+  elevenLabsCredential  ElevenLabsCredential?
 
   @@index([clerkId])
+}
+
+model ElevenLabsCredential {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  encryptedApiKey String?
+  apiKeyLast4     String?
+  verifiedAt      DateTime?
+  defaultVoiceId  String?
+  personalAgentId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model UserPreferences {

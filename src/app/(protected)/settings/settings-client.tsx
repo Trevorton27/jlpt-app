@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardTitle, CardDescription } from "@/components/ui/card";
 import { LevelSelector } from "@/components/ui/level-selector";
 import { jlptLevelLabel } from "@/lib/utils";
+import { ElevenLabsSection } from "@/components/settings/elevenlabs-section";
 
 interface Props {
   preferences: {
@@ -164,6 +165,9 @@ export function SettingsClient({ preferences, profile }: Props) {
           </div>
         </div>
       </Card>
+
+      {/* ElevenLabs API key */}
+      <ElevenLabsSection />
 
       <div className="flex items-center gap-3">
         <Button onClick={handleSave} loading={saving}>
